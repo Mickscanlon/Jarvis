@@ -43,6 +43,22 @@ TOOL_DEFINITIONS = [
         }, "required": ["path", "content"]}
     }},
     {"type": "function", "function": {
+        "name": "list_directory",
+        "description": "List files and subdirectories in a directory. Defaults to the JARVIS home directory.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Directory path (defaults to JARVIS home)"}
+        }, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "edit_file_with_ai",
+        "description": "Use Claude Sonnet or Opus to make a targeted edit to a file. Provide the file path and a plain-English instruction describing what to change. The model reads the file, applies the edit, and writes it back.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "Full file path to edit"},
+            "instruction": {"type": "string", "description": "Plain-English description of the edit to make"},
+            "model": {"type": "string", "description": "claude-sonnet-4-6 (default) or claude-opus-4-7"}
+        }, "required": ["path", "instruction"]}
+    }},
+    {"type": "function", "function": {
         "name": "create_skill",
         "description": "Create a new reusable Python skill tool. Code must define run(params: dict) -> str.",
         "parameters": {"type": "object", "properties": {
@@ -172,6 +188,50 @@ def write_file(path: str, content: str) -> str:
         return f"File write error: {e}"
 
 
+JARVIS_HOME = "C:/Users/micha/jarvis"
+
+
+def list_directory(path: str = "") -> str:
+    target = path.strip() if path.strip() else JARVIS_HOME
+    try:
+        entries = os.listdir(target)
+        lines = []
+        for name in sorted(entries):
+            full = os.path.join(target, name)
+            tag = "/" if os.path.isdir(full) else ""
+            lines.append(f"{name}{tag}")
+        return f"{target}:\n" + "\n".join(lines) if lines else f"{target}: (empty)"
+    except Exception as e:
+        return f"Directory error: {e}"
+
+
+def edit_file_with_ai(path: str, instruction: str, model: str = "claude-sonnet-4-6") -> str:
+    try:
+        import anthropic
+        content = read_file(path)
+        if content.startswith("File read error"):
+            return content
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+        result = client.messages.create(
+            model=model,
+            max_tokens=8192,
+            system="You are a precise code editor. Return ONLY the complete edited file content. No explanation, no markdown fences, no commentary.",
+            messages=[{
+                "role": "user",
+                "content": f"Instruction: {instruction}\n\nFile path: {path}\n\n```\n{content}\n```"
+            }]
+        )
+        new_content = result.content[0].text.strip()
+        # Strip accidental markdown fences
+        if new_content.startswith("```"):
+            new_content = "\n".join(new_content.splitlines()[1:])
+            if new_content.endswith("```"):
+                new_content = new_content[:-3].strip()
+        return write_file(path, new_content)
+    except Exception as e:
+        return f"AI edit error: {e}"
+
+
 def create_skill(name: str, description: str, code: str) -> str:
     from skills_manager import create_skill as _create
     return _create(name, description, code)
@@ -299,6 +359,9 @@ def dispatch_tool(name: str, args: dict, skill_fns: dict = None) -> str:
         "run_shell": lambda: run_shell(args.get("command", "")),
         "read_file": lambda: read_file(args.get("path", "")),
         "write_file": lambda: write_file(args.get("path", ""), args.get("content", "")),
+        "list_directory": lambda: list_directory(args.get("path", "")),
+        "edit_file_with_ai": lambda: edit_file_with_ai(
+            args.get("path", ""), args.get("instruction", ""), args.get("model", "claude-sonnet-4-6")),
         "create_skill": lambda: create_skill(
             args.get("name", ""), args.get("description", ""), args.get("code", "")),
         "list_open_windows": lambda: list_open_windows(),

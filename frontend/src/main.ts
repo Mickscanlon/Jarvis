@@ -50,10 +50,7 @@ async function unlock() {
 
 unlockEl.addEventListener('click', unlock)
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    inputBar.classList.toggle('visible')
-    if (inputBar.classList.contains('visible')) textInput.focus()
-  }
+  if (e.key === 'Escape') textInput.focus()
 })
 
 // Auto-unlock attempt (may fail on some browsers without user gesture)
@@ -116,13 +113,11 @@ function sendText() {
   textInput.value = ''
   ws.sendTranscript(text)
   showResponse(text)
-  inputBar.classList.remove('visible')
 }
 
 btnSend.addEventListener('click', sendText)
 textInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendText()
-  if (e.key === 'Escape') inputBar.classList.remove('visible')
 })
 
 // ── Mic toggle ────────────────────────────────────────────────────────────────

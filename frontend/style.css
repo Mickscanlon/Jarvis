@@ -52,7 +52,7 @@ html, body {
 /* ── Status text ───────────────────────────────────────────────────────────── */
 .status-text {
   position: fixed;
-  bottom: 40px;
+  bottom: 70px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 13px;
@@ -73,7 +73,7 @@ html, body {
 /* ── JARVIS label ──────────────────────────────────────────────────────────── */
 .jarvis-label {
   position: fixed;
-  bottom: 16px;
+  bottom: 56px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 10px;
@@ -101,7 +101,7 @@ html, body {
 /* ── Response text ─────────────────────────────────────────────────────────── */
 .response-text {
   position: fixed;
-  bottom: 80px;
+  bottom: 110px;
   left: 50%;
   transform: translateX(-50%);
   max-width: 600px;
@@ -156,18 +156,13 @@ html, body {
 /* ── Text input bar ────────────────────────────────────────────────────────── */
 .input-bar {
   position: fixed;
-  bottom: 110px;
+  bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   gap: 8px;
   z-index: 20;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s;
-  width: min(500px, 90vw);
-}
-.input-bar.visible {
+  width: min(600px, 90vw);
   opacity: 1;
   pointer-events: all;
 }
@@ -176,26 +171,31 @@ html, body {
   background: var(--glass);
   border: 1px solid var(--cyan-ghost);
   border-radius: 8px;
-  padding: 8px 14px;
+  padding: 10px 16px;
   color: var(--cyan);
   font-family: inherit;
   font-size: 14px;
   outline: none;
   backdrop-filter: blur(12px);
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.input-bar input:focus { border-color: var(--cyan-dim); }
-.input-bar input::placeholder { color: rgba(14, 165, 233, 0.3); }
+.input-bar input:focus {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.15);
+}
+.input-bar input::placeholder { color: rgba(14, 165, 233, 0.25); }
 .input-bar button {
   background: var(--cyan-ghost);
   border: 1px solid var(--cyan-ghost);
   border-radius: 8px;
-  padding: 8px 16px;
+  padding: 10px 18px;
   color: var(--cyan);
   font-family: inherit;
   font-size: 13px;
+  letter-spacing: 0.5px;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
+  white-space: nowrap;
 }
 .input-bar button:hover {
   background: rgba(14, 165, 233, 0.2);
