@@ -1,0 +1,59 @@
+# Core server
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+websockets>=13.0
+python-dotenv>=1.0.0
+httpx>=0.27.0
+pydantic>=2.0.0
+
+# LLM
+anthropic>=0.39.0
+openai>=1.0.0
+
+# Voice
+faster-whisper
+pyaudio
+openwakeword
+sounddevice
+soundfile
+kokoro-onnx
+numpy
+
+# Screen / OCR
+mss
+pytesseract
+pillow
+
+# Memory
+sentence-transformers
+
+# Data & Finance
+yfinance
+pandas
+beautifulsoup4
+feedparser
+requests
+
+# System
+psutil
+pywin32
+pycaw
+screen-brightness-control
+win10toast
+
+# Agents & research
+groq
+
+# Media download
+yt-dlp
+instaloader
+
+# Vision
+pymupdf
+opencv-python
+
+# Messaging
+discord.py>=2.4.0
+
+# Dev
+pytest

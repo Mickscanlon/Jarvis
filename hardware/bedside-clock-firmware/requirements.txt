@@ -1,0 +1,10 @@
+websockets>=12.0
+pyaudio
+numpy
+openwakeword
+faster-whisper
+sounddevice
+soundfile
+Pillow
+luma.oled
+RPi.GPIO

@@ -1,0 +1,28 @@
+# Secrets
+.env
+
+# Large model/audio files
+*.onnx
+*.bin
+*.gguf
+
+# LLaMA binaries
+llama/
+
+# Python virtual environment
+venv/
+
+# Claude Code internal
+.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Memory runtime state
+memory/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
