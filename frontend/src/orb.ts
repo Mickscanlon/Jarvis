@@ -26,14 +26,18 @@ const STATE_TARGETS: Record<OrbState, StateTarget> = {
 const COLOR_TARGETS: Record<OrbState, number[]> = {
   idle:      [0x4c / 255, 0xa8 / 255, 0xe8 / 255],
   listening: [0x6e / 255, 0xc4 / 255, 0xff / 255],
-  thinking:  [0x22 / 255, 0xc5 / 255, 0x5e / 255],  // bright green (overridden by pulse)
+  thinking:  [0x22 / 255, 0xc5 / 255, 0x5e / 255],  // overridden by green pulse
   speaking:  [0x88 / 255, 0xd0 / 255, 0xff / 255],
-  working:   [0x7b / 255, 0xc8 / 255, 0xff / 255],
+  working:   [0xff / 255, 0x8c / 255, 0x00 / 255],  // overridden by orange pulse
 }
 
-// Thinking state pulses between these two greens
+// Thinking: pulses between bright green and deep forest green
 const THINKING_GREEN_BRIGHT = [0x22 / 255, 0xc5 / 255, 0x5e / 255]  // #22c55e
 const THINKING_GREEN_DEEP   = [0x05 / 255, 0x46 / 255, 0x20 / 255]  // #054620
+
+// Working: pulses between bright orange and deep burnt orange
+const WORKING_ORANGE_BRIGHT = [0xff / 255, 0x8c / 255, 0x00 / 255]  // #ff8c00
+const WORKING_ORANGE_DEEP   = [0x7c / 255, 0x2d / 255, 0x12 / 255]  // #7c2d12
 
 const NUM_PARTICLES = 1600
 const LERP_RATE = 0.04
@@ -174,11 +178,16 @@ export class Orb {
     this.currentRotation    = this._lerp(this.currentRotation,    target.rotationSpeed, LERP_RATE)
 
     if (this.currentState === 'thinking') {
-      // Pulse between bright green and deep green
       const pulse = (Math.sin(t * 2.2) + 1) / 2
       const r = THINKING_GREEN_BRIGHT[0] * pulse + THINKING_GREEN_DEEP[0] * (1 - pulse)
       const g = THINKING_GREEN_BRIGHT[1] * pulse + THINKING_GREEN_DEEP[1] * (1 - pulse)
       const b = THINKING_GREEN_BRIGHT[2] * pulse + THINKING_GREEN_DEEP[2] * (1 - pulse)
+      this._lerpColor(this.currentColor, r, g, b, COLOR_LERP * 4)
+    } else if (this.currentState === 'working') {
+      const pulse = (Math.sin(t * 1.6) + 1) / 2
+      const r = WORKING_ORANGE_BRIGHT[0] * pulse + WORKING_ORANGE_DEEP[0] * (1 - pulse)
+      const g = WORKING_ORANGE_BRIGHT[1] * pulse + WORKING_ORANGE_DEEP[1] * (1 - pulse)
+      const b = WORKING_ORANGE_BRIGHT[2] * pulse + WORKING_ORANGE_DEEP[2] * (1 - pulse)
       this._lerpColor(this.currentColor, r, g, b, COLOR_LERP * 4)
     } else {
       this._lerpColor(this.currentColor, colorTarget[0], colorTarget[1], colorTarget[2], COLOR_LERP)

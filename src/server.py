@@ -192,8 +192,12 @@ async def _run_research(topic: str, depth: str):
         from agents.researcher import ResearchAgent
         agent = ResearchAgent(memory)
         report = await agent.research(topic, depth)
-        await broadcast({"type": "task_complete", "name": "research",
-                         "summary": report[:300] + "..." if len(report) > 300 else report})
+        summary = report[:400] + "..." if len(report) > 400 else report
+        await broadcast({"type": "task_complete", "name": "research", "summary": summary})
+        await speak_and_broadcast(summary)
+    except Exception as e:
+        logger.error(f"[Research] {e}")
+        await speak_and_broadcast("Research hit a snag, sir. I'll try again shortly.")
     finally:
         await set_state("idle")
 
@@ -204,8 +208,12 @@ async def _run_stock_analysis(ticker: str, analysis_type: str):
         from agents.stock_agent import StockAgent
         agent = StockAgent(memory)
         report = await agent.analyse(ticker, analysis_type)
-        await broadcast({"type": "task_complete", "name": "stock_analysis",
-                         "summary": f"{ticker} analysis complete. Saved to notes."})
+        summary = report[:400] + "..." if len(report) > 400 else report
+        await broadcast({"type": "task_complete", "name": "stock_analysis", "summary": summary})
+        await speak_and_broadcast(f"{ticker} analysis complete. {summary}")
+    except Exception as e:
+        logger.error(f"[StockAgent] {e}")
+        await speak_and_broadcast(f"Couldn't complete the {ticker} analysis, sir.")
     finally:
         await set_state("idle")
 
@@ -264,7 +272,7 @@ def parse_text_tool_calls(content: str) -> list:
     return calls
 
 
-async def run_agent(user_text: str) -> str:
+async def run_agent(user_text: str, on_working=None) -> str:
     global _last_response
 
     skill_defs, skill_fns = load_skills()
@@ -320,6 +328,11 @@ async def run_agent(user_text: str) -> str:
                 continue
 
         if tool_calls:
+            # On the first tool call: speak acknowledgement and switch to working state
+            if loop == 0 and on_working:
+                ack = content.strip() if content and len(content.strip()) > 5 else ""
+                await on_working(ack)
+
             messages.append({
                 "role": "assistant",
                 "content": content,
@@ -568,7 +581,12 @@ async def ws_voice(websocket: WebSocket):
                     continue
                 await set_state("thinking")
                 try:
-                    response = await run_agent(text)
+                    async def _on_working(ack_text: str):
+                        spoken = ack_text or "Understood. Working on that now, sir."
+                        await speak_and_broadcast(spoken)
+                        await set_state("working")
+
+                    response = await run_agent(text, on_working=_on_working)
                     await speak_and_broadcast(response)
                 except Exception as e:
                     logger.error(f"[WS] Agent error: {e}")
@@ -602,7 +620,11 @@ async def ws_remote(websocket: WebSocket):
                 text = msg.get("text", "").strip()
                 if text:
                     await set_state("thinking")
-                    response = await run_agent(text)
+                    async def _on_working_remote(ack_text: str):
+                        spoken = ack_text or "Understood. Working on that now, sir."
+                        await speak_and_broadcast(spoken)
+                        await set_state("working")
+                    response = await run_agent(text, on_working=_on_working_remote)
                     # Send audio back to the remote device
                     await websocket.send_text(json.dumps({
                         "type": "response", "text": response
@@ -646,7 +668,11 @@ async def _handle_audio(ws: WebSocket, audio_b64: str):
             text = apply_stt_corrections(text)
             if not is_echo(text, _last_response):
                 await set_state("thinking")
-                response = await run_agent(text)
+                async def _on_working_audio(ack_text: str):
+                    spoken = ack_text or "Understood. Working on that now, sir."
+                    await speak_and_broadcast(spoken)
+                    await set_state("working")
+                response = await run_agent(text, on_working=_on_working_audio)
                 await speak_and_broadcast(response)
     except Exception as e:
         logger.error(f"[STT] Audio handling error: {e}")
@@ -912,7 +938,11 @@ async def _handle_local_transcript(text: str):
         if not text.strip():
             return
         await set_state("thinking")
-        response = await run_agent(text)
+        async def _on_working_local(ack_text: str):
+            spoken = ack_text or "Understood. Working on that now, sir."
+            await speak_and_broadcast(spoken)
+            await set_state("working")
+        response = await run_agent(text, on_working=_on_working_local)
         await speak_and_broadcast(response)
 
 

@@ -43,6 +43,13 @@ TOOL_DEFINITIONS = [
         }, "required": ["path", "content"]}
     }},
     {"type": "function", "function": {
+        "name": "fetch_news",
+        "description": "Fetch the latest news headlines from RSS feeds (ABC, BBC, Reuters, Guardian). Returns titles and summaries. Call this when asked for news or headlines.",
+        "parameters": {"type": "object", "properties": {
+            "max_items": {"type": "integer", "description": "Max headlines to return (default 10)"}
+        }, "required": []}
+    }},
+    {"type": "function", "function": {
         "name": "list_directory",
         "description": "List files and subdirectories in a directory. Defaults to the JARVIS home directory.",
         "parameters": {"type": "object", "properties": {
@@ -186,6 +193,21 @@ def write_file(path: str, content: str) -> str:
         return f"Written {len(content)} chars to {path}"
     except Exception as e:
         return f"File write error: {e}"
+
+
+def fetch_news(max_items: int = 10) -> str:
+    try:
+        from integrations.news import fetch_all_news
+        items = fetch_all_news(max_per_feed=3)
+        if not items:
+            return "No news available right now."
+        lines = [
+            f"[{item['source']}] {item['title']} — {item.get('summary', '')[:120]}"
+            for item in items[:max_items]
+        ]
+        return "\n".join(lines)
+    except Exception as e:
+        return f"News fetch error: {e}"
 
 
 JARVIS_HOME = "C:/Users/micha/jarvis"
@@ -359,6 +381,7 @@ def dispatch_tool(name: str, args: dict, skill_fns: dict = None) -> str:
         "run_shell": lambda: run_shell(args.get("command", "")),
         "read_file": lambda: read_file(args.get("path", "")),
         "write_file": lambda: write_file(args.get("path", ""), args.get("content", "")),
+        "fetch_news": lambda: fetch_news(args.get("max_items", 10)),
         "list_directory": lambda: list_directory(args.get("path", "")),
         "edit_file_with_ai": lambda: edit_file_with_ai(
             args.get("path", ""), args.get("instruction", ""), args.get("model", "claude-sonnet-4-6")),
