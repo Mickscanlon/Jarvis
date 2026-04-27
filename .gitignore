@@ -12,6 +12,9 @@ llama/
 # Python virtual environment
 venv/
 
+# Node modules
+node_modules/
+
 # Claude Code internal
 .claude/
 
@@ -26,3 +29,4 @@ memory/
 # OS artifacts
 .DS_Store
 Thumbs.db
+$null
