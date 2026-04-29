@@ -58,12 +58,12 @@ These are too large for GitHub and must be downloaded separately:
 
 | File | Size | Purpose | Where to get it |
 |---|---|---|---|
-| `models/qwen2.5-7b-instruct.gguf` | ~4.4 GB | Local LLM (Tier 0) | [HuggingFace Qwen2.5-7B-GGUF](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF) |
-| `kokoro-v1.0.onnx` | ~310 MB | Local TTS engine | [HuggingFace Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) |
-| `voices-v1.0.bin` | ~28 MB | Kokoro voice data | Same release as above |
+| `models/qwen2.5-7b-instruct.gguf` | ~4.4 GB | Local LLM (Tier 0) | [HuggingFace Qwen2.5-7B-GGUF](https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF) [Q4 usually the best](https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/blob/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf) but is hardware dependent |
+| `kokoro-v1.0.onnx` | ~310 MB | Local TTS engine | pip install kokoro-onnx then download [kokoro-v1.0.onnx](https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx) |
+| `voices-v1.0.bin` | ~28 MB | Kokoro voice data | [voices-v1.0.bin](https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin) |
 | `llama/` | ~200 MB | llama.cpp server binaries | [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases) |
 
-Place all files at the paths shown, relative to the repo root.
+Place all files at the paths shown, relative to the repo root. Name the llamma release folder llama after extractions
 
 ---
 
