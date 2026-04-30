@@ -59,11 +59,11 @@ These are too large for GitHub and must be downloaded separately:
 | File | Size | Purpose | Where to get it |
 |---|---|---|---|
 | `models/qwen2.5-7b-instruct.gguf` | ~4.4 GB | Local LLM (Tier 0) | [HuggingFace Qwen2.5-7B-GGUF](https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF) [Q4 usually the best](https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/blob/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf) but is hardware dependent |
-| `kokoro-v1.0.onnx` | ~310 MB | Local TTS engine | pip install kokoro-onnx then download [kokoro-v1.0.onnx](https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx) |
+| `kokoro-v1.0.onnx` | ~310 MB | Local TTS engine | [kokoro-v1.0.onnx](https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx) |
 | `voices-v1.0.bin` | ~28 MB | Kokoro voice data | [voices-v1.0.bin](https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin) |
 | `llama/` | ~200 MB | llama.cpp server binaries | [llama.cpp releases](https://github.com/ggerganov/llama.cpp/releases) |
 
-Place all files at the paths shown, relative to the repo root. Name the llamma release folder llama after extractions
+Place all files at the paths shown, relative to the repo root. Ensure file and folder names match above
 
 ---
 
@@ -106,10 +106,9 @@ Open `.env` and set at minimum:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...       # Required — all Claude calls go through here
-GROQ_API_KEY=gsk_...               # Strongly recommended (fast STT via Groq Whisper)
 ```
 
-Everything else is optional. See `.env.example` for the full list with comments.
+Everything else is optional. See `.env.example` for the full list with comments. If not Anthropic api is set complex queries will likely fail or not return the desired result based on the local model run.
 
 ### 5. Set your audio device indices
 
@@ -226,6 +225,7 @@ All optional. JARVIS works without any of them.
 | Integration | Required env vars | What it enables |
 |---|---|---|
 | ElevenLabs TTS | `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | Higher-quality voice output |
+| Groq Whisper STT | `GROQ_API_KEY` | Very accurate STT with minimal latency |
 | Discord | `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID` | Send/receive Discord messages |
 | Home Assistant | `HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN` | Control smart home devices |
 | Email | `EMAIL_IMAP_SERVER`, `EMAIL_ADDRESS`, `EMAIL_PASSWORD` | Read and summarise email |
