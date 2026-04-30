@@ -1,6 +1,6 @@
 # JARVIS v2.0
 
-A locally-hosted AI assistant with wake-word detection, voice I/O, and a live 3D orb interface. JARVIS routes each request to the cheapest model that can handle it — local llama.cpp → Claude Haiku → Claude Sonnet → Claude Opus — and can read/write files, control Windows, search the web, fetch news, run stock analysis, control smart home devices, and edit its own source code.
+A locally-hosted AI assistant with wake-word detection, voice I/O, and a live 3D orb interface. JARVIS routes each request to the cheapest model that can handle it — local llama.cpp → Claude Haiku → Claude Sonnet → Claude Opus — And keeps track of API spend amounts and warns you once you hit a certain amount. Jarvis can also read/write files, control Windows, search the web, fetch news, run stock analysis, control smart home devices, and edit its own source code.
 
 ---
 
