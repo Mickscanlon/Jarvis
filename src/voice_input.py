@@ -256,10 +256,13 @@ def transcribe_audio(audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> str:
 
 def listen_for_wake_word(callback) -> None:
     """
-    Continuously listen for the wake word.  When detected, extend the session
-    and call *callback* with the transcribed follow-up utterance (if any).
+    Continuously listen for the wake word.  After detection, capture the
+    user's command within the same stream (VAD-based silence detection),
+    then call *callback* with the transcribed text.
 
     This function blocks indefinitely and is intended to be run in a thread.
+    The callback is always invoked from a daemon thread — never from the
+    sounddevice audio callback — so blocking operations are safe inside it.
     """
     try:
         oww_model = WakeWordModel(
@@ -274,15 +277,73 @@ def listen_for_wake_word(callback) -> None:
     print(f"[listen_for_wake_word] Listening on device {MIC_DEVICE} "
           f"({channels} ch) for '{WAKE_WORD}' …")
 
-    audio_buffer: list[np.ndarray] = []
+    # Tuning constants
+    SILENCE_RMS       = 0.008                              # RMS below this = silence
+    SILENCE_CHUNKS    = int(1.5 * SAMPLE_RATE / WAKE_CHUNK)  # 1.5 s of silence ends capture
+    MAX_WAIT_CHUNKS   = int(3.0 * SAMPLE_RATE / WAKE_CHUNK)  # 3 s max wait for speech to start
+    MAX_RECORD_CHUNKS = int(12.0 * SAMPLE_RATE / WAKE_CHUNK) # 12 s hard cap
+
+    # Mutable state shared between audio_callback and the outer scope
+    state = {
+        "post_wake":       False,
+        "speech_detected": False,
+        "silent_count":    0,
+        "wait_count":      0,
+        "buf":             [],   # post-wake audio chunks
+    }
+
+    def _fire(chunks: list):
+        """Transcribe and call back in a daemon thread so the audio callback stays free."""
+        combined = np.concatenate(chunks)
+        def _run():
+            text = transcribe_audio(combined)
+            if text:
+                callback(text)
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _reset():
+        state["post_wake"]       = False
+        state["speech_detected"] = False
+        state["silent_count"]    = 0
+        state["wait_count"]      = 0
+        state["buf"].clear()
 
     def audio_callback(indata: np.ndarray, frames: int, time_info, status) -> None:
         if status:
             print(f"[audio_callback] Status: {status}")
-        # Convert to mono int16 for openwakeword
+
         mono = indata.mean(axis=1) if indata.ndim > 1 else indata.flatten()
+
+        # ── Post-wake capture mode ──────────────────────────────────────────────
+        if state["post_wake"]:
+            state["buf"].append(mono.copy())
+            rms = float(np.sqrt(np.mean(mono ** 2)))
+
+            if rms > SILENCE_RMS:
+                state["speech_detected"] = True
+                state["silent_count"]    = 0
+            elif state["speech_detected"]:
+                state["silent_count"] += 1
+            else:
+                state["wait_count"] += 1
+
+            # Abort if user never started speaking within the wait window
+            if not state["speech_detected"] and state["wait_count"] >= MAX_WAIT_CHUNKS:
+                print("[listen_for_wake_word] No speech after wake word — resetting.")
+                _reset()
+                return
+
+            # End capture on silence after speech, or hard cap
+            if (state["speech_detected"] and state["silent_count"] >= SILENCE_CHUNKS) \
+                    or len(state["buf"]) >= MAX_RECORD_CHUNKS:
+                chunks = list(state["buf"])
+                _reset()
+                _fire(chunks)
+            return  # don't run wake-word detector while capturing
+
+        # ── Wake-word detection mode ────────────────────────────────────────────
         chunk_int16 = (mono * 32767).astype(np.int16)
-        prediction = oww_model.predict(chunk_int16)
+        prediction  = oww_model.predict(chunk_int16)
 
         triggered = any(
             score > 0.5
@@ -293,21 +354,8 @@ def listen_for_wake_word(callback) -> None:
         if triggered:
             print("[listen_for_wake_word] Wake word detected!")
             extend_session()
-            # Snapshot current buffer for potential follow-up transcription
-            if audio_buffer:
-                combined = np.concatenate(audio_buffer)
-                audio_buffer.clear()
-                text = transcribe_audio(combined)
-                if text:
-                    callback(text)
-            else:
-                callback("")
-        else:
-            # Keep a rolling ~3-second buffer for follow-up transcription
-            audio_buffer.append(mono.copy())
-            max_chunks = int(SAMPLE_RATE * 3 / WAKE_CHUNK)
-            while len(audio_buffer) > max_chunks:
-                audio_buffer.pop(0)
+            _reset()
+            state["post_wake"] = True
 
     try:
         with sd.InputStream(

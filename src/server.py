@@ -877,22 +877,45 @@ async def _start_discord_bot():
 # ── Local voice pipeline thread ───────────────────────────────────────────────
 
 def _voice_loop_thread():
+    """
+    Run the wake-word listener in a daemon thread and forward transcribed
+    commands to the asyncio event loop via a thread-safe queue.
+
+    listen_for_wake_word now captures the full command with VAD-based silence
+    detection inside its own InputStream, then fires the callback from a
+    daemon thread — so _on_command never runs in a sounddevice callback and
+    is safe to hand off to asyncio.
+    """
+    import queue as _queue
+    import threading as _threading
     try:
-        from voice_input import listen_for_wake_word, listen_once
+        from voice_input import listen_for_wake_word
         import voice_output as _vo_vi
 
-        def _on_wake(text: str):
-            # If no follow-up was captured alongside the wake word, record now
-            if not text and not _vo_vi.IS_SPEAKING:
-                text = listen_once(timeout=8.0)
-            if text and _main_loop is not None:
-                asyncio.run_coroutine_threadsafe(
-                    _handle_local_transcript(text),
-                    _main_loop,
-                )
+        _cmd_q: "_queue.Queue[str]" = _queue.Queue()
 
+        def _on_command(text: str):
+            _cmd_q.put(text)
+
+        ww_thread = _threading.Thread(
+            target=listen_for_wake_word,
+            args=(_on_command,),
+            daemon=True,
+            name="wake_word_listener",
+        )
+        ww_thread.start()
         logger.info("[Voice] Voice pipeline started.")
-        listen_for_wake_word(_on_wake)  # blocks indefinitely
+
+        while ww_thread.is_alive():
+            try:
+                text = _cmd_q.get(timeout=1.0)
+            except _queue.Empty:
+                continue
+
+            if text and not _vo_vi.IS_SPEAKING and _main_loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    _handle_local_transcript(text), _main_loop
+                )
     except Exception as e:
         logger.error(f"[Voice] Pipeline thread failed: {e}")
 
