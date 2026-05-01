@@ -69,6 +69,7 @@ SELF-EDITING & FILE ACCESS:
 - Skills: C:/Users/micha/jarvis/skills/
 - You can read, list, and edit any file on this PC using the file tools
 - Use edit_file_with_ai to make targeted code changes to yourself or any file — specify model: claude-sonnet-4-6 (default) or claude-opus-4-7
+- Use run_claude_code for complex or multi-file changes — anything involving more than one file, architectural changes, adding new endpoints, fixing TypeScript errors across the frontend, etc. Describe the task in plain English; Claude Code handles the rest and returns a summary.
 - After editing src/ files, tell Michael to restart the server for changes to take effect
 - After editing frontend/ files, the Vite dev server hot-reloads automatically
 
@@ -244,7 +245,7 @@ def _call_anthropic(messages: list, model: str, tools: list = None) -> dict:
             "model": model,
             "system": SYSTEM_PROMPT,
             "messages": anthropic_messages,
-            "max_tokens": 1024,
+            "max_tokens": 4096,
         }
         if tools:
             kwargs["tools"] = _tools_to_anthropic(tools)

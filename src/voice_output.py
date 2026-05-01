@@ -1,5 +1,5 @@
 """
-voice_output.py - TTS: Kokoro ONNX (primary) → ElevenLabs (optional) → pyttsx3 (fallback)
+voice_output.py - TTS: Kokoro ONNX (primary) -> ElevenLabs (optional) -> pyttsx3 (fallback)
 Natural speech chunking with pause durations.
 """
 import os
@@ -16,23 +16,43 @@ TTS_SPEED = float(os.getenv("TTS_SPEED", "1.0"))
 OUTPUT_DEVICE = int(os.getenv("OUTPUT_DEVICE", "3"))
 ELEVENLABS_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
+USE_ELEVENLABS = os.getenv("USE_ELEVENLABS", "false").lower() == "true"
+TTS_VOICE = os.getenv("TTS_VOICE", "af_sarah")
 
 IS_SPEAKING = False
+SHOULD_STOP_SPEAKING = False
 SPEAKING_LOCK = threading.Lock()
+STOP_LOCK = threading.Lock()
 
-# Natural pause durations (seconds) after each boundary
+# Kokoro model singleton
+_kokoro = None
+_kokoro_lock = threading.Lock()
+
+# Natural pause durations (seconds)
 PAUSE_AFTER = {
     "sir.": 0.60, "sir!": 0.60, "sir?": 0.60,
     "sir,": 0.25,
     "...": 0.35,
-    "—": 0.25,
     ",": 0.18,
     ".": 0.45,
     "!": 0.45,
     "?": 0.45,
 }
 
-CHUNK_RE = re.compile(r'(?<=[.!?])\s+|(?<=,\s)(?=[A-Z])|(?=\s—\s)|(?<=sir[.,!?])\s*')
+
+def _get_kokoro():
+    global _kokoro
+    with _kokoro_lock:
+        if _kokoro is None:
+            try:
+                from kokoro_onnx import Kokoro
+                model_path = "C:/Users/micha/jarvis/models/kokoro-v0_19.onnx"
+                voices_path = "C:/Users/micha/jarvis/models/voices.json"
+                _kokoro = Kokoro(model_path, voices_path)
+            except Exception as e:
+                print(f"[TTS] Kokoro init failed: {e}")
+                _kokoro = None
+    return _kokoro
 
 
 def _clean_for_speech(text: str) -> str:
@@ -40,10 +60,11 @@ def _clean_for_speech(text: str) -> str:
     text = re.sub(r'`+', '', text)
     text = re.sub(r'#+\s*', '', text)
     text = re.sub(r'\[ACTION:[^\]]+\][^\n]*', '', text)
+    text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 
-def _split_into_chunks(text: str) -> list[str]:
+def _split_into_chunks(text: str) -> list:
     """Split on natural sentence boundaries for lower perceived latency."""
     chunks = []
     current = ""
@@ -51,7 +72,6 @@ def _split_into_chunks(text: str) -> list[str]:
         sentence = sentence.strip()
         if not sentence:
             continue
-        # Keep short sentences together
         if len(current) + len(sentence) < 150:
             current = f"{current} {sentence}".strip()
         else:
@@ -68,7 +88,7 @@ def _pause_after_chunk(chunk: str):
     lower = chunk.lower().rstrip()
     if lower.endswith(("sir.", "sir!", "sir?")):
         time.sleep(0.60)
-    elif lower.endswith(("...",)):
+    elif lower.endswith("..."):
         time.sleep(0.35)
     elif lower.endswith((".", "!", "?")):
         time.sleep(0.45)
@@ -76,130 +96,117 @@ def _pause_after_chunk(chunk: str):
         time.sleep(0.18)
 
 
+def _speak_elevenlabs(text: str):
+    """Speak using ElevenLabs cloud TTS."""
+    import requests
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
+    headers = {
+        "xi-api-key": ELEVENLABS_KEY,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "text": text,
+        "model_id": "eleven_monolingual_v1",
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+    }
+    resp = requests.post(url, json=payload, headers=headers, stream=True, timeout=15)
+    resp.raise_for_status()
+
+    audio_bytes = b""
+    for chunk in resp.iter_content(chunk_size=4096):
+        if chunk:
+            audio_bytes += chunk
+
+    import io
+    import soundfile as sf
+    data, samplerate = sf.read(io.BytesIO(audio_bytes))
+    if data.ndim > 1:
+        data = data[:, 0]
+    sd.play(data.astype(np.float32), samplerate=samplerate, device=OUTPUT_DEVICE)
+    sd.wait()
+
+
+def _speak_kokoro(text: str):
+    """Speak using local Kokoro ONNX TTS."""
+    # Always read TTS_VOICE fresh from env so live switching works
+    voice = os.getenv("TTS_VOICE", "af_sarah")
+    speed = float(os.getenv("TTS_SPEED", "1.0"))
+    kokoro = _get_kokoro()
+    if kokoro is None:
+        raise RuntimeError("Kokoro not available")
+    samples, sample_rate = kokoro.create(text, voice=voice, speed=speed, lang="en-us")
+    sd.play(samples.astype(np.float32), samplerate=sample_rate, device=OUTPUT_DEVICE)
+    sd.wait()
+
+
+def _speak_pyttsx3(text: str):
+    """Fallback TTS using pyttsx3."""
+    import pyttsx3
+    engine = pyttsx3.init()
+    voices = engine.getProperty("voices")
+    # Try to pick a male voice if TTS_VOICE suggests male (am_ prefix)
+    voice = os.getenv("TTS_VOICE", "af_sarah")
+    if voice.startswith("am_") and voices:
+        for v in voices:
+            if "male" in v.name.lower() or "david" in v.name.lower() or "mark" in v.name.lower():
+                engine.setProperty("voice", v.id)
+                break
+    engine.setProperty("rate", int(200 * float(os.getenv("TTS_SPEED", "1.0"))))
+    engine.say(text)
+    engine.runAndWait()
+
+
 class VoiceOutput:
-    def __init__(self):
-        print("[TTS] Loading Kokoro model...")
-        from kokoro_onnx import Kokoro
-        self.kokoro = Kokoro("kokoro-v1.0.onnx", "voices-v1.0.bin")
-        self.voice = "af_sarah"
-        self._output_device = self._detect_output_device()
-        print(f"[TTS] Kokoro ready (output device {self._output_device}).")
-
-    def _detect_output_device(self) -> int:
-        """Use configured device, fall back to scanning for Realtek."""
-        try:
-            devices = sd.query_devices()
-            # Try configured index first
-            d = devices[OUTPUT_DEVICE]
-            if d["max_output_channels"] > 0:
-                return OUTPUT_DEVICE
-        except Exception:
-            pass
-        # Scan for Realtek speakers
-        try:
-            devices = sd.query_devices()
-            for i, d in enumerate(devices):
-                if "realtek" in d["name"].lower() and d["max_output_channels"] > 0:
-                    return i
-        except Exception:
-            pass
-        return OUTPUT_DEVICE
-
-    def _speak_kokoro(self, text: str):
-        global IS_SPEAKING
-        chunks = _split_into_chunks(text)
+    def speak(self, text: str):
+        global IS_SPEAKING, SHOULD_STOP_SPEAKING
+        text = _clean_for_speech(text)
+        if not text:
+            return
 
         with SPEAKING_LOCK:
             IS_SPEAKING = True
+        with STOP_LOCK:
+            SHOULD_STOP_SPEAKING = False
 
         try:
+            chunks = _split_into_chunks(text)
             for chunk in chunks:
-                if not chunk.strip():
-                    continue
-                samples, sample_rate = self.kokoro.create(
-                    chunk, voice=self.voice, speed=TTS_SPEED, lang="en-us"
-                )
-                sd.play(samples, sample_rate, device=self._output_device)
-                sd.wait()
+                with STOP_LOCK:
+                    if SHOULD_STOP_SPEAKING:
+                        break
+                try:
+                    if USE_ELEVENLABS and ELEVENLABS_KEY:
+                        _speak_elevenlabs(chunk)
+                    else:
+                        _speak_kokoro(chunk)
+                except Exception as e:
+                    print(f"[TTS] Primary TTS failed ({e}), trying pyttsx3")
+                    try:
+                        _speak_pyttsx3(chunk)
+                    except Exception as e2:
+                        print(f"[TTS] pyttsx3 also failed: {e2}")
                 _pause_after_chunk(chunk)
         finally:
             with SPEAKING_LOCK:
                 IS_SPEAKING = False
-            time.sleep(0.4)
 
-    def _speak_elevenlabs(self, text: str):
-        global IS_SPEAKING
+    def stop_speech(self):
+        global SHOULD_STOP_SPEAKING
+        with STOP_LOCK:
+            SHOULD_STOP_SPEAKING = True
         try:
-            import httpx
-            headers = {
-                "xi-api-key": ELEVENLABS_KEY,
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "text": text,
-                "model_id": "eleven_turbo_v2_5",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
-            }
-            resp = httpx.post(
-                f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
-                json=payload, headers=headers, timeout=10.0
-            )
-            if resp.status_code == 200:
-                import io, soundfile as sf, numpy as np
-                data, rate = sf.read(io.BytesIO(resp.content))
-                with SPEAKING_LOCK:
-                    IS_SPEAKING = True
-                try:
-                    sd.play(data.astype(np.float32), rate, device=self._output_device)
-                    sd.wait()
-                finally:
-                    with SPEAKING_LOCK:
-                        IS_SPEAKING = False
-                    time.sleep(0.4)
-                return True
-        except Exception as e:
-            print(f"[TTS] ElevenLabs failed: {e}")
-        return False
+            sd.stop()
+        except Exception:
+            pass
 
-    def _speak_fallback(self, text: str):
-        global IS_SPEAKING
-        try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 180)
-            with SPEAKING_LOCK:
-                IS_SPEAKING = True
-            try:
-                engine.say(text)
-                engine.runAndWait()
-            finally:
-                with SPEAKING_LOCK:
-                    IS_SPEAKING = False
-                time.sleep(0.4)
-        except Exception as e:
-            print(f"[TTS] pyttsx3 fallback failed: {e}")
 
-    def speak(self, text: str):
-        if not text or not text.strip():
-            return
+# Module-level convenience wrappers
+_instance = VoiceOutput()
 
-        clean = _clean_for_speech(text)
-        if not clean:
-            return
 
-        print(f"[TTS] {clean[:90]}{'...' if len(clean) > 90 else ''}")
+def speak(text: str):
+    _instance.speak(text)
 
-        try:
-            self._speak_kokoro(clean)
-        except Exception as e:
-            print(f"[TTS] Kokoro failed: {e}")
-            if ELEVENLABS_KEY:
-                if not self._speak_elevenlabs(clean):
-                    self._speak_fallback(clean)
-            else:
-                self._speak_fallback(clean)
 
-    def generate_audio_bytes(self, text: str) -> tuple[np.ndarray, int]:
-        """Generate audio samples without playing. Returns (samples, sample_rate)."""
-        clean = _clean_for_speech(text)
-        return self.kokoro.create(clean, voice=self.voice, speed=TTS_SPEED, lang="en-us")
+def stop_speech():
+    _instance.stop_speech()

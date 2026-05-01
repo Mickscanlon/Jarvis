@@ -104,7 +104,10 @@ ws.onMessage((msg) => {
 })
 
 voice.onStart = () => setOrbState('speaking')
-voice.onEnd = () => setOrbState('idle')
+// Restore the server's last-reported state after playback. The server sends
+// next_state early (before the browser's 0.8s onEnd delay), so ws.state
+// already reflects 'working' when this fires after the ack clip.
+voice.onEnd = () => setOrbState((ws.state as OrbState) === 'working' ? 'working' : 'idle')
 
 // ── Text input ────────────────────────────────────────────────────────────────
 function sendText() {

@@ -24,7 +24,13 @@ USER_INTERESTS = ["technology", "business", "property", "victoria", "bendigo", "
 
 def _fetch_feed(url: str, limit: int = 5) -> list[dict]:
     try:
-        feed = feedparser.parse(url)
+        import socket
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(8)
+        try:
+            feed = feedparser.parse(url)
+        finally:
+            socket.setdefaulttimeout(old_timeout)
         items = []
         for entry in feed.entries[:limit]:
             items.append({

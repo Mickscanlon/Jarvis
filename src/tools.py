@@ -118,6 +118,23 @@ TOOL_DEFINITIONS = [
             "level": {"type": "integer", "description": "0-100"}
         }, "required": ["level"]}
     }},
+    {"type": "function", "function": {
+        "name": "run_claude_code",
+        "description": (
+            "Delegate a complex, multi-file, or architectural task to Claude Code CLI. "
+            "Use this when the task involves editing multiple files, running tests, "
+            "installing packages, restructuring code, or any change that would exceed "
+            "a single write_file operation. Claude Code will handle the full task "
+            "autonomously and return a summary. "
+            "Examples: 'refactor the router to add caching', "
+            "'add a new REST endpoint and wire it to the frontend', "
+            "'fix all TypeScript errors in the frontend'."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "task": {"type": "string", "description": "Plain-English description of what Claude Code should do. Be specific and include file paths where relevant."},
+            "working_dir": {"type": "string", "description": "Directory to run in (default: C:/Users/micha/jarvis)"}
+        }, "required": ["task"]}
+    }},
 ]
 
 
@@ -368,6 +385,43 @@ def set_volume(level: int) -> str:
         return f"Volume error: {e}"
 
 
+# ── Claude Code delegation ────────────────────────────────────────────────────
+
+def run_claude_code(task: str, working_dir: str = None) -> str:
+    """
+    Spawn Claude Code CLI to handle a complex multi-file task.
+    Runs non-interactively with --print so output is captured.
+    Times out after 5 minutes; returns a summary of what was done.
+    """
+    cwd = working_dir or r"C:\Users\micha\jarvis"
+    try:
+        result = subprocess.run(
+            ["claude", "--print", "--dangerously-skip-permissions", task],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            encoding="utf-8",
+            errors="replace",
+        )
+        output = (result.stdout or "").strip()
+        err = (result.stderr or "").strip()
+        if result.returncode != 0 and not output:
+            return f"Claude Code exited {result.returncode}: {err[:500]}"
+        combined = output or err
+        # Return last 2000 chars — the summary is at the end
+        return combined[-2000:] if len(combined) > 2000 else combined
+    except subprocess.TimeoutExpired:
+        return "Claude Code timed out after 5 minutes. Task may still be running."
+    except FileNotFoundError:
+        return (
+            "Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code "
+            "then restart JARVIS."
+        )
+    except Exception as e:
+        return f"run_claude_code error: {e}"
+
+
 # ── Skills ────────────────────────────────────────────────────────────────────
 
 def load_skills() -> tuple[list, dict]:
@@ -395,6 +449,8 @@ def dispatch_tool(name: str, args: dict, skill_fns: dict = None) -> str:
             args.get("title", "JARVIS"), args.get("message", "")),
         "get_system_info": lambda: get_system_info(),
         "set_volume": lambda: set_volume(args.get("level", 50)),
+        "run_claude_code": lambda: run_claude_code(
+            args.get("task", ""), args.get("working_dir", "")),
     }
 
     if name in handlers:
