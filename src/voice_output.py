@@ -46,8 +46,8 @@ def _get_kokoro():
         if _kokoro is None:
             try:
                 from kokoro_onnx import Kokoro
-                model_path = "C:/Users/micha/jarvis/models/kokoro-v0_19.onnx"
-                voices_path = "C:/Users/micha/jarvis/models/voices.json"
+                model_path = "C:/Users/micha/jarvis/kokoro-v1.0.onnx"
+                voices_path = "C:/Users/micha/jarvis/voices-v1.0.bin"
                 _kokoro = Kokoro(model_path, voices_path)
             except Exception as e:
                 print(f"[TTS] Kokoro init failed: {e}")
@@ -97,32 +97,23 @@ def _pause_after_chunk(chunk: str):
 
 
 def _speak_elevenlabs(text: str):
-    """Speak using ElevenLabs cloud TTS."""
+    """Speak using ElevenLabs cloud TTS (PCM output to avoid MP3 decode dependency)."""
     import requests
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}/stream"
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
     headers = {
         "xi-api-key": ELEVENLABS_KEY,
         "Content-Type": "application/json",
     }
+    params = {"output_format": "pcm_24000"}
     payload = {
         "text": text,
-        "model_id": "eleven_monolingual_v1",
+        "model_id": "eleven_turbo_v2_5",
         "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
     }
-    resp = requests.post(url, json=payload, headers=headers, stream=True, timeout=15)
+    resp = requests.post(url, json=payload, headers=headers, params=params, timeout=15)
     resp.raise_for_status()
-
-    audio_bytes = b""
-    for chunk in resp.iter_content(chunk_size=4096):
-        if chunk:
-            audio_bytes += chunk
-
-    import io
-    import soundfile as sf
-    data, samplerate = sf.read(io.BytesIO(audio_bytes))
-    if data.ndim > 1:
-        data = data[:, 0]
-    sd.play(data.astype(np.float32), samplerate=samplerate, device=OUTPUT_DEVICE)
+    pcm = np.frombuffer(resp.content, dtype=np.int16).astype(np.float32) / 32768.0
+    sd.play(pcm, samplerate=24000, device=OUTPUT_DEVICE)
     sd.wait()
 
 
@@ -180,11 +171,20 @@ class VoiceOutput:
                     else:
                         _speak_kokoro(chunk)
                 except Exception as e:
-                    print(f"[TTS] Primary TTS failed ({e}), trying pyttsx3")
-                    try:
-                        _speak_pyttsx3(chunk)
-                    except Exception as e2:
-                        print(f"[TTS] pyttsx3 also failed: {e2}")
+                    print(f"[TTS] Primary TTS failed ({e})")
+                    # Fallback chain: if ElevenLabs was primary, try Kokoro next
+                    kokoro_ok = False
+                    if USE_ELEVENLABS and ELEVENLABS_KEY:
+                        try:
+                            _speak_kokoro(chunk)
+                            kokoro_ok = True
+                        except Exception as e2:
+                            print(f"[TTS] Kokoro also failed: {e2}")
+                    if not kokoro_ok:
+                        try:
+                            _speak_pyttsx3(chunk)
+                        except Exception as e3:
+                            print(f"[TTS] All TTS backends failed: {e3}")
                 _pause_after_chunk(chunk)
         finally:
             with SPEAKING_LOCK:

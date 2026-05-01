@@ -409,29 +409,31 @@ async def speak_and_broadcast(text: str, next_state: str = "idle"):
     eleven_voice = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
     use_eleven = os.getenv("USE_ELEVENLABS", "true").lower() == "true"
 
+    import numpy as np
+
     if eleven_key and use_eleven:
         try:
             import httpx
-            import numpy as np
+            # Request raw PCM so we can decode without soundfile MP3 support
             resp = await asyncio.to_thread(
                 lambda: httpx.post(
                     f"https://api.elevenlabs.io/v1/text-to-speech/{eleven_voice}",
-                    headers={"xi-api-key": eleven_key,
-                             "Content-Type": "application/json",
-                             "Accept": "audio/mpeg"},
+                    headers={"xi-api-key": eleven_key, "Content-Type": "application/json"},
+                    params={"output_format": "pcm_24000"},
                     json={"text": clean, "model_id": "eleven_turbo_v2_5",
                           "voice_settings": {"stability": 0.45, "similarity_boost": 0.80}},
                     timeout=15.0,
                 )
             )
             if resp.status_code == 200:
-                audio_data, sample_rate = sf.read(io.BytesIO(resp.content))
-                samples = audio_data.astype(np.float32)
-                if samples.ndim > 1:
-                    samples = samples[:, 0]
-                audio_b64 = base64.b64encode(resp.content).decode()
+                pcm = np.frombuffer(resp.content, dtype=np.int16).astype(np.float32) / 32768.0
+                samples = pcm
+                sample_rate = 24000
+                buf = io.BytesIO()
+                sf.write(buf, samples, sample_rate, format="wav")
+                audio_b64 = base64.b64encode(buf.getvalue()).decode()
                 await broadcast({"type": "audio", "data": audio_b64,
-                                 "text": text, "state": "speaking", "format": "mp3"})
+                                 "text": text, "state": "speaking", "format": "wav"})
                 logger.info("[TTS] ElevenLabs ✓")
             else:
                 logger.warning(f"[TTS] ElevenLabs {resp.status_code} — falling back to Kokoro")
@@ -441,13 +443,13 @@ async def speak_and_broadcast(text: str, next_state: str = "idle"):
     if samples is None:
         try:
             from voice_output import _get_kokoro as _kokoro_getter
-            import numpy as np
             kokoro = _kokoro_getter()
             if kokoro is not None:
                 voice_name = os.getenv("TTS_VOICE", "af_sarah")
                 speed = float(os.getenv("TTS_SPEED", "1.0"))
+                # Use lambda so keyword args are passed correctly
                 raw, sample_rate = await asyncio.to_thread(
-                    kokoro.create, clean, voice_name, speed, "en-us"
+                    lambda: kokoro.create(clean, voice=voice_name, speed=speed, lang="en-us")
                 )
                 samples = np.array(raw, dtype=np.float32)
                 buf = io.BytesIO()
@@ -456,6 +458,8 @@ async def speak_and_broadcast(text: str, next_state: str = "idle"):
                 await broadcast({"type": "audio", "data": audio_b64,
                                  "text": text, "state": "speaking", "format": "wav"})
                 logger.info("[TTS] Kokoro ✓")
+            else:
+                logger.error("[TTS] Kokoro model failed to load (check model file paths)")
         except Exception as e:
             logger.error(f"[TTS] Kokoro failed: {e}")
 
