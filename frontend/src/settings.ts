@@ -1,4 +1,5 @@
 // settings.ts - Settings panel: API keys, voice, integrations, portfolio, budget, usage
+import { getNotifPrefs, saveNotifPrefs, type NotifPrefs, NOTIF_KEY } from './notifications'
 
 interface IntegrationStatus {
   anthropic_api: boolean
@@ -56,6 +57,14 @@ export class SettingsPanel {
     this.panel.innerHTML = `
       <button class="settings-close" id="settings-close-btn">✕</button>
       <h1>SETTINGS</h1>
+
+      <h2>Notifications</h2>
+      <div class="settings-section">
+        ${this._notifToggle('enabled',    'All Notifications',  'Master switch for the left-side status panel')}
+        ${this._notifToggle('wakeWord',   'Wake Word Reminder', "Shows 'Hey JARVIS' prompt when idle")}
+        ${this._notifToggle('modelUsed',  'Model Used',         'Shows which model was used for each request')}
+        ${this._notifToggle('claudeCode', 'Claude Code Active', 'Shows indicator when Claude Code is running')}
+      </div>
 
       <h2>Model Routing</h2>
       <div class="settings-section">
@@ -142,6 +151,10 @@ export class SettingsPanel {
     this.panel.querySelectorAll<HTMLDivElement>('.toggle').forEach(el => {
       el.addEventListener('click', () => this._handleToggleClick(el))
     })
+
+    this.panel.querySelectorAll<HTMLDivElement>('.notif-toggle').forEach(el => {
+      el.addEventListener('click', () => this._handleNotifToggle(el))
+    })
   }
 
   private _toggleRow(envKey: string, name: string, hint: string): string {
@@ -168,6 +181,30 @@ export class SettingsPanel {
     } else {
       await this._postKey(key, newOn ? 'true' : 'false')
     }
+  }
+
+  private _notifToggle(key: keyof NotifPrefs, name: string, hint: string): string {
+    const prefs = getNotifPrefs()
+    const isOn = prefs[key]
+    return `
+      <div class="toggle-row">
+        <div class="toggle-label">
+          <span class="toggle-name">${name}</span>
+          <span class="toggle-hint">${hint}</span>
+        </div>
+        <div class="toggle notif-toggle ${isOn ? 'on' : ''}" id="ntog_${key}" data-notif-key="${key}"></div>
+      </div>
+    `
+  }
+
+  private _handleNotifToggle(el: HTMLDivElement) {
+    const key = el.dataset.notifKey as keyof NotifPrefs
+    if (!key) return
+    const newOn = !el.classList.contains('on')
+    el.classList.toggle('on', newOn)
+    const prefs = getNotifPrefs()
+    ;(prefs as any)[key] = newOn
+    saveNotifPrefs(prefs)
   }
 
   private async _postKey(key: string, value: string) {

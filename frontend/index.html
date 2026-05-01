@@ -59,6 +59,31 @@
   <div id="settings-panel" class="settings-panel"></div>
   <div id="settings-overlay" class="settings-overlay"></div>
 
+  <!-- Left notification panel -->
+  <div id="notif-panel" class="notif-panel">
+    <div class="notif-item" id="notif-wake" data-notif="wakeWord">
+      <div class="notif-dot notif-dot--pulse"></div>
+      <div class="notif-body">
+        <div class="notif-label">WAKE WORD</div>
+        <div class="notif-value">SAY 'HEY JARVIS'</div>
+      </div>
+    </div>
+    <div class="notif-item" id="notif-model" data-notif="modelUsed">
+      <div class="notif-dot"></div>
+      <div class="notif-body">
+        <div class="notif-label">MODEL</div>
+        <div class="notif-value" id="notif-model-val">—</div>
+      </div>
+    </div>
+    <div class="notif-item notif-item--code" id="notif-code" data-notif="claudeCode">
+      <div class="notif-dot notif-dot--green notif-dot--pulse"></div>
+      <div class="notif-body">
+        <div class="notif-label">CLAUDE CODE</div>
+        <div class="notif-value">ACTIVE</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Response text display -->
   <div id="response-text" class="response-text"></div>
 

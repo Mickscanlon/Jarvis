@@ -356,6 +356,10 @@ async def run_agent(user_text: str, on_working=None) -> str:
                     args = json.loads(tc.function.arguments)
                 except Exception:
                     args = {}
+                # Broadcast Claude Code events so the UI indicator updates
+                if tool_name == "run_claude_code":
+                    await broadcast({"type": "claude_code_start",
+                                     "task": args.get("task", "")[:80]})
                 tool_result = await asyncio.to_thread(dispatch_tool, tool_name, args, skill_fns)
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_result})
         else:

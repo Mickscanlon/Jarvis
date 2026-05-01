@@ -389,37 +389,36 @@ def set_volume(level: int) -> str:
 
 def run_claude_code(task: str, working_dir: str = None) -> str:
     """
-    Spawn Claude Code CLI to handle a complex multi-file task.
-    Runs non-interactively with --print so output is captured.
-    Times out after 5 minutes; returns a summary of what was done.
+    Open a visible Windows Terminal running Claude Code for complex tasks.
+    Returns immediately — Claude Code runs in the foreground terminal window.
+    No Anthropic API tokens consumed since Claude Code uses its own auth.
     """
     cwd = working_dir or r"C:\Users\micha\jarvis"
+    # Sanitize for safe command-line passing
+    task_clean = task.replace('"', "'").replace('\n', ' ').replace('\r', '').strip()
+    task_arg = task_clean[:500]
+
+    launched = False
+    # Prefer Windows Terminal (wt.exe) for nicer experience
     try:
-        result = subprocess.run(
-            ["claude", "--print", "--dangerously-skip-permissions", task],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            encoding="utf-8",
-            errors="replace",
+        subprocess.Popen(
+            ['wt.exe', '-d', cwd, 'cmd.exe', '/k',
+             f'echo [JARVIS → CLAUDE CODE] & echo. & claude --dangerously-skip-permissions "{task_arg}"'],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
         )
-        output = (result.stdout or "").strip()
-        err = (result.stderr or "").strip()
-        if result.returncode != 0 and not output:
-            return f"Claude Code exited {result.returncode}: {err[:500]}"
-        combined = output or err
-        # Return last 2000 chars — the summary is at the end
-        return combined[-2000:] if len(combined) > 2000 else combined
-    except subprocess.TimeoutExpired:
-        return "Claude Code timed out after 5 minutes. Task may still be running."
+        launched = True
     except FileNotFoundError:
-        return (
-            "Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code "
-            "then restart JARVIS."
+        pass
+
+    if not launched:
+        # Fallback: new CMD console window
+        subprocess.Popen(
+            ['cmd.exe', '/k',
+             f'cd /d "{cwd}" && echo [JARVIS - CLAUDE CODE] && claude --dangerously-skip-permissions "{task_arg}"'],
+            creationflags=subprocess.CREATE_NEW_CONSOLE,
         )
-    except Exception as e:
-        return f"run_claude_code error: {e}"
+
+    return f"Claude Code terminal opened. Task: {task_arg[:120]}"
 
 
 # ── Skills ────────────────────────────────────────────────────────────────────
