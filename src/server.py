@@ -438,17 +438,24 @@ async def speak_and_broadcast(text: str, next_state: str = "idle"):
         except Exception as e:
             logger.warning(f"[TTS] ElevenLabs failed ({e}) — falling back to Kokoro")
 
-    if samples is None and vo:
+    if samples is None:
         try:
-            samples, sample_rate = vo.kokoro.create(
-                clean, voice=vo.voice, speed=float(os.getenv("TTS_SPEED", "1.0")), lang="en-us"
-            )
-            buf = io.BytesIO()
-            sf.write(buf, samples, sample_rate, format="wav")
-            audio_b64 = base64.b64encode(buf.getvalue()).decode()
-            await broadcast({"type": "audio", "data": audio_b64,
-                             "text": text, "state": "speaking", "format": "wav"})
-            logger.info("[TTS] Kokoro ✓")
+            from voice_output import _get_kokoro as _kokoro_getter
+            import numpy as np
+            kokoro = _kokoro_getter()
+            if kokoro is not None:
+                voice_name = os.getenv("TTS_VOICE", "af_sarah")
+                speed = float(os.getenv("TTS_SPEED", "1.0"))
+                raw, sample_rate = await asyncio.to_thread(
+                    kokoro.create, clean, voice_name, speed, "en-us"
+                )
+                samples = np.array(raw, dtype=np.float32)
+                buf = io.BytesIO()
+                sf.write(buf, samples, sample_rate, format="wav")
+                audio_b64 = base64.b64encode(buf.getvalue()).decode()
+                await broadcast({"type": "audio", "data": audio_b64,
+                                 "text": text, "state": "speaking", "format": "wav"})
+                logger.info("[TTS] Kokoro ✓")
         except Exception as e:
             logger.error(f"[TTS] Kokoro failed: {e}")
 
@@ -459,12 +466,14 @@ async def speak_and_broadcast(text: str, next_state: str = "idle"):
                     _play_blocking, samples, sample_rate,
                     int(os.getenv("OUTPUT_DEVICE", "3"))
                 )
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.4)
             else:
+                # Wait for browser to finish playing
                 duration = len(samples) / float(sample_rate)
-                await asyncio.sleep(0.8 + duration)
-                await set_state(next_state)
-                await asyncio.sleep(1.5 + 0.8)
+                await asyncio.sleep(duration + 1.2)
+        elif not had_browser_client and vo:
+            # Last resort: use vo.speak() for local-only playback
+            await asyncio.to_thread(vo.speak, clean)
         else:
             logger.error("[TTS] No audio generated — both ElevenLabs and Kokoro failed.")
     finally:
@@ -865,19 +874,21 @@ async def _start_discord_bot():
 
 def _voice_loop_thread():
     try:
-        from voice_input import listen_for_input
+        from voice_input import listen_for_wake_word, listen_once
+        import voice_output as _vo_vi
+
+        def _on_wake(text: str):
+            # If no follow-up was captured alongside the wake word, record now
+            if not text and not _vo_vi.IS_SPEAKING:
+                text = listen_once(timeout=8.0)
+            if text and _main_loop is not None:
+                asyncio.run_coroutine_threadsafe(
+                    _handle_local_transcript(text),
+                    _main_loop,
+                )
+
         logger.info("[Voice] Voice pipeline started.")
-        while True:
-            try:
-                text = listen_for_input()
-                if text and _main_loop is not None:
-                    asyncio.run_coroutine_threadsafe(
-                        _handle_local_transcript(text),
-                        _main_loop
-                    )
-            except Exception as e:
-                logger.error(f"[Voice] listen_for_input error: {e}")
-                time.sleep(1)
+        listen_for_wake_word(_on_wake)  # blocks indefinitely
     except Exception as e:
         logger.error(f"[Voice] Pipeline thread failed: {e}")
 

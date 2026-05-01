@@ -100,7 +100,13 @@ function showError(msg: string, duration = 5000) {
 }
 
 // ── WebSocket events ──────────────────────────────────────────────────────────
-ws.onStateChange((state) => setOrbState(state as OrbState))
+ws.onStateChange((state) => {
+  setOrbState(state as OrbState)
+  // Clear any persistent "backend not connected" error once WS is live
+  if (errorEl.textContent === 'Backend not connected. Start server.py first.') {
+    errorEl.textContent = ''
+  }
+})
 
 ws.onMessage((msg) => {
   if (msg.type === 'audio' && msg.data)
@@ -173,14 +179,22 @@ btnSettings.addEventListener('click', () => settings.toggle())
 
 // ── Startup check ─────────────────────────────────────────────────────────────
 async function checkFirstRun() {
-  try {
-    const status = await fetch('/api/settings/status').then(r => r.json())
-    if (!status.anthropic_api && !status.llama_cpp && !status.ollama) {
-      setTimeout(() => settings.open(), 1000)
-      showError('No AI backend configured. Open settings to add an API key.', 10000)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const status = await fetch('/api/settings/status').then(r => r.json())
+      errorEl.textContent = ''
+      if (!status.anthropic_api && !status.llama_cpp && !status.ollama) {
+        setTimeout(() => settings.open(), 1000)
+        showError('No AI backend configured. Open settings to add an API key.', 10000)
+      }
+      return
+    } catch {
+      if (attempt < 4) {
+        await new Promise<void>(r => setTimeout(r, 2000))
+      } else {
+        showError('Backend not connected. Start server.py first.', 0)
+      }
     }
-  } catch {
-    showError('Backend not connected. Start server.py first.', 0)
   }
 }
 checkFirstRun()
