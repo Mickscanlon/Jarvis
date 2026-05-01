@@ -249,6 +249,7 @@ async def _download_media(url: str, audio_only: bool):
 _conversation_history: list[dict] = []
 _last_response = ""
 _processing_lock = asyncio.Lock()
+_local_fallback_announced = False  # speak notice only once per session
 
 
 def apply_stt_corrections(text: str) -> str:
@@ -269,16 +270,54 @@ def is_echo(text: str, last_response: str) -> bool:
 
 
 def parse_text_tool_calls(content: str) -> list:
+    """
+    Safety net: local models sometimes emit tool calls as plain text rather than
+    structured JSON.  This parser handles the most common patterns so tools still
+    work when function-calling JSON is absent.
+    """
     calls = []
-    pattern = r'(run_shell|read_screen|read_file|write_file|create_skill|list_open_windows)\s*[\("\']*([^)"\'`\n]*)[\)"\'`]*'
-    for tool_name, args_str in re.findall(pattern, content):
+    # Generic pattern: tool_name("arg") / tool_name('arg') / tool_name: arg
+    pattern = (
+        r'\b(run_shell|read_screen|read_file|write_file|list_directory|'
+        r'create_skill|list_open_windows|open_app|get_clipboard|set_clipboard|'
+        r'send_windows_notification|fetch_news|get_weather|get_time|'
+        r'list_tasks|add_task|complete_task|run_claude_code)'
+        r'\s*[\(:"\']*([^)"\'`\n]{0,300})[\)"\'`]*'
+    )
+    for tool_name, args_str in re.findall(pattern, content, re.IGNORECASE):
+        tool_name = tool_name.lower()
         args_str = args_str.strip().strip('"\'')
         if tool_name == "run_shell":
             calls.append({"name": "run_shell", "args": {"command": args_str}})
         elif tool_name == "read_screen":
-            calls.append({"name": "read_screen", "args": {"region": "full"}})
+            calls.append({"name": "read_screen", "args": {"region": args_str or "full"}})
         elif tool_name == "read_file":
             calls.append({"name": "read_file", "args": {"path": args_str}})
+        elif tool_name == "write_file":
+            # write_file("path", "content") — best-effort split on first comma
+            parts = args_str.split(",", 1)
+            calls.append({"name": "write_file", "args": {
+                "path": parts[0].strip().strip('"\''),
+                "content": parts[1].strip().strip('"\'') if len(parts) > 1 else "",
+            }})
+        elif tool_name == "list_directory":
+            calls.append({"name": "list_directory", "args": {"path": args_str or ""}})
+        elif tool_name == "open_app":
+            calls.append({"name": "open_app", "args": {"app_name": args_str}})
+        elif tool_name == "fetch_news":
+            calls.append({"name": "fetch_news", "args": {}})
+        elif tool_name == "get_weather":
+            calls.append({"name": "get_weather", "args": {"location": args_str or ""}})
+        elif tool_name == "get_time":
+            calls.append({"name": "get_time", "args": {}})
+        elif tool_name == "list_tasks":
+            calls.append({"name": "list_tasks", "args": {}})
+        elif tool_name == "run_claude_code":
+            calls.append({"name": "run_claude_code", "args": {"task": args_str}})
+        elif tool_name == "list_open_windows":
+            calls.append({"name": "list_open_windows", "args": {}})
+        elif tool_name == "get_clipboard":
+            calls.append({"name": "get_clipboard", "args": {}})
     return calls
 
 
@@ -316,6 +355,21 @@ async def run_agent(user_text: str, on_working=None) -> str:
             cost_aud=result.get("cost_aud", 0.0),
             duration_ms=result.get("duration_ms", 0)
         )
+
+        # Notify when we fell back from the cloud API to a local model
+        if result.get("local_fallback"):
+            global _local_fallback_announced
+            await broadcast({
+                "type": "notification",
+                "title": "Running locally",
+                "body": f"API unavailable — using {result.get('model', 'local model')}",
+                "priority": "medium",
+            })
+            if not _local_fallback_announced:
+                _local_fallback_announced = True
+                asyncio.create_task(
+                    speak_and_broadcast("API unavailable, sir. Switched to local model.")
+                )
 
         alert_amount = memory.check_daily_spend_alert()
         if alert_amount:
@@ -675,6 +729,20 @@ def health():
 @app.get("/api/usage")
 def usage():
     return memory.get_usage_stats()
+
+
+@app.get("/api/local-status")
+def local_status():
+    from llm import is_api_available, _api_failure_count, _forced_local
+    return {
+        "api_available": is_api_available(),
+        "api_failure_count": _api_failure_count,
+        "forced_local": _forced_local,
+        "ollama_available": model_router._ollama_available,
+        "llama_cpp_available": model_router._llama_available,
+        "local_mode_env": os.getenv("LOCAL_MODE", "false").lower() == "true",
+        "has_api_key": bool(os.getenv("ANTHROPIC_API_KEY", "").strip()),
+    }
 
 
 @app.get("/api/model-stats")

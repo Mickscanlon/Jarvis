@@ -102,6 +102,37 @@ _llama_client = None
 _ollama_client = None
 _anthropic_client = None
 
+# ── API health tracking ───────────────────────────────────────────────────────
+_api_failure_count = 0
+_forced_local = False
+_FAILURE_THRESHOLD = 3  # auto-switch to local after this many consecutive failures
+
+
+def mark_api_failure() -> None:
+    global _api_failure_count, _forced_local
+    _api_failure_count += 1
+    if _api_failure_count >= _FAILURE_THRESHOLD and not _forced_local:
+        _forced_local = True
+        logger.warning(
+            f"[LLM] Anthropic API failed {_api_failure_count}× in a row — "
+            "auto-switching to local mode for this session"
+        )
+
+
+def mark_api_success() -> None:
+    global _api_failure_count, _forced_local
+    if _forced_local:
+        logger.info("[LLM] Anthropic API recovered — resuming cloud mode")
+    _api_failure_count = 0
+    _forced_local = False
+
+
+def is_api_available() -> bool:
+    """True if the Anthropic API should be used (key present, no repeated failures)."""
+    if _forced_local:
+        return False
+    return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+
 
 def _get_llama_client():
     global _llama_client
@@ -196,6 +227,27 @@ def _messages_to_anthropic(messages: list) -> list:
     return out
 
 
+def _best_ollama_model() -> str:
+    """Return the best available Ollama model, preferring larger qwen2.5 variants."""
+    configured = OLLAMA_MODEL
+    try:
+        import httpx
+        resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=2.0)
+        if resp.status_code == 200:
+            names = [m["name"] for m in resp.json().get("models", [])]
+            # Prefer larger models in priority order
+            for preferred in [
+                "qwen2.5-coder:14B", "qwen2.5-coder:14b",
+                "qwen2.5:14b", "qwen2.5:latest",
+                "qwen2.5-coder:7b", "qwen2.5:7b",
+            ]:
+                if preferred in names:
+                    return preferred
+    except Exception:
+        pass
+    return configured
+
+
 def _call_local(messages: list, tools: list = None, model: str = None) -> dict:
     """Call local llama.cpp server."""
     client = _get_llama_client()
@@ -205,7 +257,7 @@ def _call_local(messages: list, tools: list = None, model: str = None) -> dict:
             "model": model_name,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
             "temperature": 0.7,
-            "max_tokens": 512,
+            "max_tokens": 2048,
         }
         if tools:
             kwargs["tools"] = tools
@@ -221,20 +273,21 @@ def _call_local(messages: list, tools: list = None, model: str = None) -> dict:
             "cost_aud": 0.0,
         }
     except Exception as e:
-        logger.error(f"[LLM] local error: {e}")
+        logger.error(f"[LLM] llama.cpp error: {e}")
         return {"content": f"Local LLM error: {e}", "tool_calls": [], "model": model_name,
                 "input_tokens": 0, "output_tokens": 0, "cost_aud": 0.0}
 
 
-def _call_ollama(messages: list, tools: list = None) -> dict:
-    """Call Ollama server."""
+def _call_ollama(messages: list, tools: list = None, model: str = None) -> dict | None:
+    """Call Ollama server. Returns None if unavailable so caller can fall through."""
     client = _get_ollama_client()
+    model_name = model or OLLAMA_MODEL
     try:
         kwargs = {
-            "model": OLLAMA_MODEL,
+            "model": model_name,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
             "temperature": 0.7,
-            "max_tokens": 512,
+            "max_tokens": 2048,
         }
         if tools:
             kwargs["tools"] = tools
@@ -244,14 +297,24 @@ def _call_ollama(messages: list, tools: list = None) -> dict:
         return {
             "content": choice.message.content or "",
             "tool_calls": choice.message.tool_calls or [],
-            "model": OLLAMA_MODEL,
+            "model": model_name,
             "input_tokens": getattr(resp.usage, "prompt_tokens", 0),
             "output_tokens": getattr(resp.usage, "completion_tokens", 0),
             "cost_aud": 0.0,
         }
     except Exception as e:
         logger.error(f"[LLM] Ollama error: {e}")
-        return None  # caller falls back to Claude
+        return None
+
+
+def _call_best_local(messages: list, tools: list = None) -> dict:
+    """Try Ollama first (better models), fall through to llama.cpp."""
+    from router import router
+    if router._ollama_available:
+        result = _call_ollama(messages, tools)
+        if result is not None:
+            return result
+    return _call_local(messages, tools)
 
 
 def _call_anthropic(messages: list, model: str, tools: list = None) -> dict:
@@ -279,7 +342,6 @@ def _call_anthropic(messages: list, model: str, tools: list = None) -> dict:
             if block.type == "text":
                 content_text += block.text
             elif block.type == "tool_use":
-                # Wrap in OpenAI-compatible structure for unified processing
                 class _FakeFn:
                     def __init__(self, name, arguments):
                         self.name = name
@@ -292,6 +354,7 @@ def _call_anthropic(messages: list, model: str, tools: list = None) -> dict:
 
         in_tok = resp.usage.input_tokens
         out_tok = resp.usage.output_tokens
+        mark_api_success()
         return {
             "content": content_text,
             "tool_calls": tool_calls,
@@ -301,20 +364,20 @@ def _call_anthropic(messages: list, model: str, tools: list = None) -> dict:
             "cost_aud": calculate_cost_aud(model, in_tok, out_tok),
         }
     except Exception as e:
+        mark_api_failure()
         logger.error(f"[LLM] Anthropic error: {e}")
-        return {"content": f"API error: {e}. Trying local fallback.", "tool_calls": [],
+        return {"content": f"API error: {e}", "tool_calls": [],
                 "model": model, "input_tokens": 0, "output_tokens": 0, "cost_aud": 0.0}
 
 
 def chat(messages: list, tools: list = None, tier: int = None, model: str = None) -> dict:
     """
     Unified chat function. Routes to the right backend based on tier.
-    Returns: {content, tool_calls, model, input_tokens, output_tokens}
+    Returns: {content, tool_calls, model, input_tokens, output_tokens, local_fallback?}
     """
     from router import router
 
     if tier is None and model is None:
-        # Auto-route based on last user message
         last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         if isinstance(last_user, list):
             last_user = " ".join(str(b) for b in last_user)
@@ -327,23 +390,22 @@ def chat(messages: list, tools: list = None, tier: int = None, model: str = None
 
     t0 = time.time()
 
+    # If the API has repeatedly failed, force everything to local
+    if tier > 0 and not is_api_available():
+        logger.info("[LLM] API unavailable — routing to local")
+        tier = 0
+        model = "local"
+
     if tier == 0 or model == "local":
-        # Try Ollama first, fall back to llama.cpp
-        ollama_avail = os.getenv("OLLAMA_BASE_URL") and router._ollama_available
-        if ollama_avail:
-            result = _call_ollama(messages, tools)
-            if result:
-                result["duration_ms"] = int((time.time() - t0) * 1000)
-                return result
-        result = _call_local(messages, tools)
+        result = _call_best_local(messages, tools)
     elif tier in (1, 2, 3):
         result = _call_anthropic(messages, model, tools)
-        if result and result["content"].startswith("API error"):
-            # Fall back to local on API failure
-            logger.warning("[LLM] Falling back to local model")
-            result = _call_local(messages, tools)
+        if result["content"].startswith("API error"):
+            logger.warning("[LLM] API failed — falling back to local")
+            result = _call_best_local(messages, tools)
+            result["local_fallback"] = True
     else:
-        result = _call_local(messages, tools)
+        result = _call_best_local(messages, tools)
 
     result["duration_ms"] = int((time.time() - t0) * 1000)
     return result

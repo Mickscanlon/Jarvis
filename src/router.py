@@ -98,11 +98,19 @@ class RouterAgent:
         local_mode = os.getenv("LOCAL_MODE", "false").lower() == "true"
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
-        if local_mode or not api_key:
-            return RouteDecision(
-                tier=0, model="local", reasoning="local mode / no API key",
-                estimated_cost_aud=0.0
-            )
+        # Check runtime API health (tracks consecutive failures)
+        try:
+            from llm import is_api_available
+            api_healthy = is_api_available()
+        except ImportError:
+            api_healthy = bool(api_key)
+
+        if local_mode or not api_key or not api_healthy:
+            if not api_healthy and api_key:
+                reason = "API unavailable — local fallback"
+            else:
+                reason = "local mode" if local_mode else "no API key"
+            return RouteDecision(tier=0, model="local", reasoning=reason, estimated_cost_aud=0.0)
 
         msg = message.strip()
 
@@ -123,9 +131,19 @@ class RouterAgent:
         return RouteDecision(tier=tier, model=model, reasoning=reasoning, estimated_cost_aud=cost)
 
     def startup_message(self) -> str:
-        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         local_mode = os.getenv("LOCAL_MODE", "false").lower() == "true"
-        if local_mode or not api_key:
+        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        try:
+            from llm import is_api_available
+            api_ok = is_api_available()
+        except ImportError:
+            api_ok = bool(api_key)
+
+        if local_mode or not api_key or not api_ok:
+            if self._ollama_available:
+                return "Running in local mode via Ollama, sir."
+            if self._llama_available:
+                return "Running in local mode via llama.cpp, sir."
             return "Running in local mode, sir."
         if self._ollama_available:
             return "Running in hybrid mode, sir."
