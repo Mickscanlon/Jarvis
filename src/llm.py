@@ -12,6 +12,25 @@ load_dotenv(dotenv_path="C:/Users/micha/jarvis/.env", override=True)
 
 logger = logging.getLogger(__name__)
 
+# ── Accurate pricing (USD per million tokens, May 2026) ───────────────────────
+_MODEL_COSTS_USD: dict[str, dict[str, float]] = {
+    "claude-haiku-4-5-20251001": {"input": 0.80,  "output": 4.00},
+    "claude-haiku-4-5":          {"input": 0.80,  "output": 4.00},
+    "claude-sonnet-4-6":         {"input": 3.00,  "output": 15.00},
+    "claude-sonnet-4-5":         {"input": 3.00,  "output": 15.00},
+    "claude-opus-4-6":           {"input": 15.00, "output": 75.00},
+    "claude-opus-4-7":           {"input": 15.00, "output": 75.00},
+}
+_AUD_PER_USD = float(os.getenv("AUD_PER_USD", "1.60"))
+
+
+def calculate_cost_aud(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Compute actual AUD cost from token counts and published model pricing."""
+    costs = _MODEL_COSTS_USD.get(model, {"input": 3.00, "output": 15.00})
+    cost_usd = (input_tokens * costs["input"] + output_tokens * costs["output"]) / 1_000_000
+    return round(cost_usd * _AUD_PER_USD, 6)
+
+
 LLAMA_URL = os.getenv("LLM_BASE_URL", "http://localhost:8080")
 LLAMA_MODEL = os.getenv("LLM_MODEL", "qwen2.5-7b-instruct")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -199,11 +218,12 @@ def _call_local(messages: list, tools: list = None, model: str = None) -> dict:
             "model": model_name,
             "input_tokens": getattr(resp.usage, "prompt_tokens", 0),
             "output_tokens": getattr(resp.usage, "completion_tokens", 0),
+            "cost_aud": 0.0,
         }
     except Exception as e:
         logger.error(f"[LLM] local error: {e}")
         return {"content": f"Local LLM error: {e}", "tool_calls": [], "model": model_name,
-                "input_tokens": 0, "output_tokens": 0}
+                "input_tokens": 0, "output_tokens": 0, "cost_aud": 0.0}
 
 
 def _call_ollama(messages: list, tools: list = None) -> dict:
@@ -227,6 +247,7 @@ def _call_ollama(messages: list, tools: list = None) -> dict:
             "model": OLLAMA_MODEL,
             "input_tokens": getattr(resp.usage, "prompt_tokens", 0),
             "output_tokens": getattr(resp.usage, "completion_tokens", 0),
+            "cost_aud": 0.0,
         }
     except Exception as e:
         logger.error(f"[LLM] Ollama error: {e}")
@@ -269,17 +290,20 @@ def _call_anthropic(messages: list, model: str, tools: list = None) -> dict:
                         self.function = fn
                 tool_calls.append(_FakeTc(block.id, _FakeFn(block.name, block.input)))
 
+        in_tok = resp.usage.input_tokens
+        out_tok = resp.usage.output_tokens
         return {
             "content": content_text,
             "tool_calls": tool_calls,
             "model": model,
-            "input_tokens": resp.usage.input_tokens,
-            "output_tokens": resp.usage.output_tokens,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "cost_aud": calculate_cost_aud(model, in_tok, out_tok),
         }
     except Exception as e:
         logger.error(f"[LLM] Anthropic error: {e}")
         return {"content": f"API error: {e}. Trying local fallback.", "tool_calls": [],
-                "model": model, "input_tokens": 0, "output_tokens": 0}
+                "model": model, "input_tokens": 0, "output_tokens": 0, "cost_aud": 0.0}
 
 
 def chat(messages: list, tools: list = None, tier: int = None, model: str = None) -> dict:
